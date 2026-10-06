@@ -1,0 +1,36 @@
+name: f1-analytics-declarative-pipeline
+catalog: glue_catalog
+database: {database}
+storage: s3://{bucket}/{prefix}/state/
+configuration:
+  # Iceberg via the Data Catalog ("Option 1" per the AWS Glue SDP docs) -- needed
+  # for proper catalog registration/queryability and for streaming tables'
+  # cross-run incremental checkpoint persistence.
+  spark.sql.catalog.glue_catalog: "org.apache.iceberg.spark.SparkCatalog"
+  spark.sql.catalog.glue_catalog.catalog-impl: "org.apache.iceberg.aws.glue.GlueCatalog"
+  spark.sql.catalog.glue_catalog.io-impl: "org.apache.iceberg.aws.s3.S3FileIO"
+  spark.sql.catalog.glue_catalog.warehouse: "s3://{bucket}/{prefix}/warehouse"
+  # Iceberg's GlueCatalog client-side-validates table/namespace names against a
+  # stricter character set than Glue itself actually enforces, and rejects some
+  # otherwise-valid names. Found empirically (console debugging against the live
+  # job, confirmed via CloudTrail) to be required for this pipeline's tables to
+  # register successfully -- moved here so it's real, version-controlled config
+  # instead of a manual job-level default that `cdk deploy` would silently wipe.
+  spark.sql.catalog.glue_catalog.glue.skip-name-validation: "true"
+  # F1 API base URL (deploy-time default only). Season/round are NOT set here --
+  # they are required --conf arguments at StartJobRun time (one run = one race).
+  # Key is "spark."-prefixed to match the custom conf keys set at run time (see
+  # 01_bronze_raw.py) -- Spark's --conf parser silently drops non-"spark."-
+  # prefixed keys, so this convention is followed everywhere for consistency.
+  spark.f1.api.base_url: "{f1_api_base_url}"
+  # Per-run staging prefix for raw_race: each run's fetched JSON is written here
+  # (via plain boto3, not Spark) and then read back via a genuine
+  # spark.readStream.json(...) -- required because a streaming table can only be
+  # populated by a real streaming relation, confirmed on a real Glue RUN-mode
+  # execution: AnalysisException
+  # [INVALID_FLOW_QUERY_TYPE.BATCH_RELATION_FOR_STREAMING_TABLE] when the flow
+  # instead returned an in-process batch DataFrame directly.
+  spark.f1.staging.path: "s3://{bucket}/{prefix}/bronze-staging/"
+libraries:
+  - glob:
+      include: transformations/**

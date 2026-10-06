@@ -1,0 +1,15 @@
+*.swp
+__pycache__
+.pytest_cache
+.venv
+*.egg-info
+
+# CDK asset staging directory
+.cdk.staging
+cdk.out
+
+# Rendered pipeline package (regenerated at synth time by scripts/package_pipeline.py)
+build
+
+# Local Claude Code settings (personal, not shared)
+.claude/settings.local.json
