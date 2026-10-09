@@ -1,0 +1,10 @@
+pytest==8.4.2
+# Glue 6.0 bundles Spark 4.1.1 (confirmed via AWS's Glue 6.0 release docs) -- pinned
+# exactly so local test runs stay representative of runtime behavior. Requires
+# Java 17+ (Glue 6.0 also upgraded to Java 17). Re-verify against AWS's current
+# Glue-version support matrix if this ever changes.
+pyspark==4.1.1
+requests==2.32.3
+# AWS Glue's Python job environment ships boto3 pre-installed (not via
+# --additional-python-modules); pinned here only for local test parity.
+boto3==1.35.99
