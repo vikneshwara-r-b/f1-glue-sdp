@@ -23,6 +23,15 @@ def stage_payload(payload_text: str, staging_path: str, season: str, round_: str
     first and reading it back via spark.readStream is what makes the returned
     DataFrame a real streaming relation.
 
+    (A custom PySpark Python Data Source was tried as an alternative to this
+    staging step -- confirmed on a real Glue run to be currently broken on
+    Glue 6.0 for reasons unrelated to this pipeline's code: the Python Data
+    Source worker process runs under Python 3.9 internally, but Glue's bundled
+    pyspark.zip's sql/types.py uses Python 3.10+ union-type syntax in
+    GeographyType, so that worker can't even import pyspark.sql.types --
+    TypeError: unsupported operand type(s) for |: 'type' and 'type'. Reverted
+    back to this staging approach, which is known-working.)
+
     Returns the full s3:// URI written.
     """
     parsed = urlparse(staging_path)
@@ -31,6 +40,27 @@ def stage_payload(payload_text: str, staging_path: str, season: str, round_: str
     key = f"{prefix}{season}_{round_}_{int(time.time() * 1000)}.json"
     boto3.client("s3").put_object(Bucket=bucket, Key=key, Body=payload_text.encode("utf-8"))
     return f"s3://{bucket}/{key}"
+
+
+def ensure_staging_path_exists(staging_path: str) -> None:
+    """Writes a tiny, harmless marker object under staging_path if nothing is
+    there yet -- its key doesn't end in ".json", so it's never picked up by the
+    "*.json" glob filter the real streaming read uses, i.e. it's never mistaken
+    for race data.
+
+    Needed because VALIDATE mode skips stage_payload() entirely (no live API
+    call -- see 01_bronze_raw.py), but spark.readStream...json(staging_path)
+    still requires the path to already exist at plan-build time: confirmed on a
+    real Glue run against a brand-new deployment (nothing ever staged there
+    yet) that omitting this raises AnalysisException [PATH_NOT_FOUND].
+
+    Pure boto3, same reasoning as stage_payload: no Spark API involved, so no
+    risk of tripping the pipeline-query-function analyze/execute block.
+    """
+    parsed = urlparse(staging_path)
+    bucket = parsed.netloc
+    prefix = parsed.path.lstrip("/")
+    boto3.client("s3").put_object(Bucket=bucket, Key=f"{prefix}.keep", Body=b"")
 
 
 def fetch_race_payload(base_url: str, season: str | None, round_: str | None) -> str:

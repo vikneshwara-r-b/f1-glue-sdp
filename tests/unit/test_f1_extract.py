@@ -3,7 +3,7 @@ from unittest.mock import Mock, patch
 import pytest
 import requests
 
-from f1_pipeline_lib.extract import fetch_race_payload, stage_payload
+from f1_pipeline_lib.extract import ensure_staging_path_exists, fetch_race_payload, stage_payload
 
 BASE_URL = "https://f1api.dev/api"
 STAGING_PATH = "s3://my-bucket/my-prefix/bronze-staging/"
@@ -67,3 +67,14 @@ def test_stage_payload_keys_are_unique_across_calls():
         second = stage_payload("b", STAGING_PATH, "2024", "1")
 
     assert first != second
+
+
+def test_ensure_staging_path_exists_writes_keep_marker():
+    mock_s3 = Mock()
+    with patch("f1_pipeline_lib.extract.boto3.client", return_value=mock_s3) as mock_client:
+        ensure_staging_path_exists(STAGING_PATH)
+
+    mock_client.assert_called_once_with("s3")
+    mock_s3.put_object.assert_called_once_with(
+        Bucket="my-bucket", Key="my-prefix/bronze-staging/.keep", Body=b""
+    )

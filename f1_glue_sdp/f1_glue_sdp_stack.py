@@ -137,8 +137,6 @@ class F1GlueSdpStack(Stack):
             glue_version="6.0",
             worker_type=props.worker_type,
             number_of_workers=props.num_workers,
-            # Flex runs on spare capacity at a lower price; start time isn't guaranteed.
-            execution_class="FLEX",
             command=glue.CfnJob.JobCommandProperty(
                 name="glueetl",
                 script_location=pipeline_asset.s3_object_url,

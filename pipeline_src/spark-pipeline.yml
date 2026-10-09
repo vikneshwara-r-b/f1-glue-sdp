@@ -29,7 +29,11 @@ configuration:
   # populated by a real streaming relation, confirmed on a real Glue RUN-mode
   # execution: AnalysisException
   # [INVALID_FLOW_QUERY_TYPE.BATCH_RELATION_FOR_STREAMING_TABLE] when the flow
-  # instead returned an in-process batch DataFrame directly.
+  # instead returned an in-process batch DataFrame directly. A custom PySpark
+  # DataSource was also tried as an alternative to this staging step and found
+  # to be currently broken on Glue 6.0 for unrelated platform reasons (Python
+  # 3.9/3.10+ mismatch in the Python Data Source worker) -- this staging
+  # approach is the one that's actually known-working.
   spark.f1.staging.path: "s3://{bucket}/{prefix}/bronze-staging/"
 libraries:
   - glob:

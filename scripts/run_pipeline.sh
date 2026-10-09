@@ -77,7 +77,10 @@ while true; do
   STATE="$(aws glue get-job-run --profile "$AWS_PROFILE" --region "$AWS_REGION" \
     --job-name "$JOB_NAME" --run-id "$RUN_ID" --query 'JobRun.JobRunState' --output text)"
   case "$STATE" in
-    STARTING|RUNNING|STOPPING) sleep 10 ;;
+    # WAITING: queued for Flex capacity (this job uses ExecutionClass=FLEX --
+    # "spare capacity at a lower price; start time isn't guaranteed" -- can sit
+    # here for several minutes before STARTING).
+    WAITING|STARTING|RUNNING|STOPPING) sleep 10 ;;
     SUCCEEDED) echo "Run $RUN_ID: $STATE"; exit 0 ;;
     *) echo "Run $RUN_ID: $STATE"; exit 1 ;;
   esac

@@ -8,7 +8,7 @@ _ZIP_ROOT = Path(__file__).resolve().parent.parent
 if str(_ZIP_ROOT) not in sys.path:
     sys.path.insert(0, str(_ZIP_ROOT))
 
-from f1_pipeline_lib.extract import fetch_race_payload, stage_payload
+from f1_pipeline_lib.extract import ensure_staging_path_exists, fetch_race_payload, stage_payload
 from f1_pipeline_lib.schema import RAW_RACE_SCHEMA
 
 from pyspark import pipelines as dp
@@ -60,6 +60,14 @@ ROUND_CONF = "spark.f1.season.round"
 STAGING_PATH_CONF = "spark.f1.staging.path"
 DEFAULT_BASE_URL = "https://f1api.dev/api"
 
+# spark.glue.sdp.jobMode is the same --conf key scripts/run_pipeline.sh already
+# sets on every invocation (VALIDATE or RUN) to control Glue's own dry-run
+# behavior. It's spark.-prefixed, so -- unlike the internal `dry` flag inside
+# pyspark.pipelines itself, which never reaches user code (confirmed by reading
+# that package's source directly) -- this one genuinely lands in the session's
+# conf and is readable here. No new custom flag/no run_pipeline.sh change needed.
+JOB_MODE_CONF = "spark.glue.sdp.jobMode"
+
 # Streaming table: AWS Glue SDP's documented Python API for incremental tables is
 # dp.create_streaming_table() + @dp.append_flow(target=...), not a @dp.table decorator.
 # https://docs.aws.amazon.com/glue/latest/dg/spark-declarative-pipelines.html
@@ -81,25 +89,50 @@ def ingest_raw_race():
     season = spark.conf.get(SEASON_CONF, None)  # required -- StartJobRun --conf, no silent default
     round_ = spark.conf.get(ROUND_CONF, None)  # required -- StartJobRun --conf, no silent default
     staging_path = spark.conf.get(STAGING_PATH_CONF, None)  # required -- set in spark-pipeline.yml
+    job_mode = spark.conf.get(JOB_MODE_CONF, "RUN")
 
-    # Raises on a missing conf, network/HTTP failure, or non-2xx response -- there
-    # is no quarantine/retry layer in v1 (explicit decision, revisit later), so a
-    # bad fetch simply fails the job run rather than being caught and routed
-    # anywhere.
-    payload_text = fetch_race_payload(base_url, season, round_)
+    # VALIDATE is a dry run that's documented to write no data -- but SDP still
+    # executes this whole function body during VALIDATE regardless (confirmed:
+    # flow.func() is called unconditionally during registration, before the dry
+    # flag is even in scope). Without this guard, every VALIDATE run called the
+    # live F1 API and staged a real file to S3 for no benefit, since VALIDATE
+    # never materializes raw_race anyway. Skipping the fetch+stage here doesn't
+    # weaken VALIDATE's actual checks: schema/dependency resolution only needs
+    # the streaming-read plan below, which is built the same way either way.
+    if job_mode.upper() != "VALIDATE":
+        # Raises on a missing conf, network/HTTP failure, or non-2xx response --
+        # there is no quarantine/retry layer in v1 (explicit decision, revisit
+        # later), so a bad fetch simply fails the job run rather than being
+        # caught and routed anywhere.
+        payload_text = fetch_race_payload(base_url, season, round_)
 
-    # raw_race is a streaming table, so this flow must return a genuine
-    # streaming relation -- confirmed on a real Glue RUN-mode execution that a
-    # batch DataFrame built in-process (via createDataFrame/from_json) is
-    # rejected: AnalysisException
-    # [INVALID_FLOW_QUERY_TYPE.BATCH_RELATION_FOR_STREAMING_TABLE]. stage_payload
-    # is pure boto3 (no Spark API, so no risk of tripping the pipeline-query-
-    # function analyze/execute block) -- it writes this run's payload to a
-    # unique key under staging_path, which the streaming read below then picks
-    # up as a new file. Spark's own file-source checkpointing (under this
-    # pipeline's `storage:` location) tracks which files have already been
-    # processed, so re-running never reprocesses an old file.
-    stage_payload(payload_text, staging_path, season, round_)
+        # raw_race is a streaming table, so this flow must return a genuine
+        # streaming relation -- confirmed on a real Glue RUN-mode execution that
+        # a batch DataFrame built in-process (via createDataFrame/from_json) is
+        # rejected: AnalysisException
+        # [INVALID_FLOW_QUERY_TYPE.BATCH_RELATION_FOR_STREAMING_TABLE].
+        #
+        # (A custom PySpark Python Data Source was tried as an alternative to
+        # this S3-staging step -- confirmed on a real Glue run to be currently
+        # broken on Glue 6.0 for unrelated platform reasons: the Python Data
+        # Source worker runs under Python 3.9 internally, but Glue's bundled
+        # pyspark.zip's sql/types.py needs Python 3.10+ syntax to even import.
+        # Reverted; staging remains the known-working mechanism.)
+        #
+        # stage_payload is pure boto3 (no Spark API, so no risk of tripping the
+        # pipeline-query-function analyze/execute block) -- it writes this run's
+        # payload to a unique key under staging_path, which the streaming read
+        # below then picks up as a new file. Spark's own file-source
+        # checkpointing (under this pipeline's `storage:` location) tracks
+        # which files have already been processed, so re-running never
+        # reprocesses an old file.
+        stage_payload(payload_text, staging_path, season, round_)
+    else:
+        # Guarantees staging_path exists even if nothing has ever been staged
+        # there yet (e.g. a VALIDATE run against a brand-new deployment) --
+        # confirmed on a real Glue run that without this, the streaming read
+        # below raises AnalysisException [PATH_NOT_FOUND] at plan-build time.
+        ensure_staging_path_exists(staging_path)
 
     parsed = (
         spark.readStream.schema(RAW_RACE_SCHEMA)
