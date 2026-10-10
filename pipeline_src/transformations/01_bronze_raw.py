@@ -1,13 +1,9 @@
-import sys
-from pathlib import Path
-
-# Defensive import-path guard: ensures the zip root (where f1_pipeline_lib/ sits
-# alongside transformations/) is importable even if Glue's SDP runtime doesn't
-# already put the zip root on sys.path.
-_ZIP_ROOT = Path(__file__).resolve().parent.parent
-if str(_ZIP_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ZIP_ROOT))
-
+# f1_pipeline_lib is made importable by _sys_path_bootstrap.py, which
+# spark-pipeline.yml's libraries: list guarantees execs before this file (see
+# that file's docstring). Testing via a real --mode validate run whether this
+# single shared bootstrap replaces the per-file sys.path guard this file used
+# to carry (two prior per-file alternatives were already confirmed NOT to
+# work: plain removal, and Glue's --extra-py-files job parameter).
 from f1_pipeline_lib.extract import ensure_staging_path_exists, fetch_race_payload, stage_payload
 from f1_pipeline_lib.schema import RAW_RACE_SCHEMA
 

@@ -138,6 +138,27 @@ def test_glue_job_uses_version_6_and_sdp_flags():
     )
 
 
+def test_stack_only_deploys_a_keep_marker_not_real_reference_data():
+    # reference_data/ (repo root) itself is deliberately kept out of the CDK
+    # stack -- a plain `cdk deploy` must never upload its real CSVs (see
+    # scripts/deploy.sh's --upload-reference-data flag for that opt-in path).
+    # Exactly one BucketDeployment is expected: a tiny `.keep` marker so
+    # circuit_track_type's streaming read doesn't hit [PATH_NOT_FOUND] on a
+    # brand-new deployment with no uploaded data yet.
+    template = _synth_template()
+    template.resource_count_is("Custom::CDKBucketDeployment", 1)
+    template.has_resource_properties(
+        "Custom::CDKBucketDeployment",
+        {
+            "DestinationBucketKeyPrefix": "f1-pipeline/reference-data",
+            # Critical: must never prune:true, or this marker deployment would
+            # delete real CSVs a prior --upload-reference-data run already
+            # placed in this same prefix, on every single `cdk deploy`.
+            "Prune": False,
+        },
+    )
+
+
 def test_glue_job_does_not_enable_glue_datacatalog():
     # Iceberg tables in this pipeline use catalog-impl=GlueCatalog (see
     # pipeline_src/spark-pipeline.yml). AWS's SDP docs state that combining

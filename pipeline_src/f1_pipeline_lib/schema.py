@@ -90,3 +90,23 @@ RAW_RACE_SCHEMA = StructType(
         StructField("url", StringType(), True),
     ]
 )
+
+# Second, independent reference source (flat-file, not API): circuit track-type
+# classification (street / permanent / hybrid), not present anywhere in the F1
+# API payload. Joins on circuit_Id -- the same key race_circuits/dim_circuits
+# already carry.
+#
+# nullable=True on both fields (not False): confirmed locally that Spark's CSV
+# reader always produces nullable columns regardless of the declared schema's
+# nullability (same reason every RAW_RACE_SCHEMA field is nullable=True) --
+# declaring these non-nullable caused a real Glue RUN failure, since Iceberg's
+# streaming writer rejects a batch whose actual (nullable) schema doesn't match
+# the table's declared (required) schema:
+# IllegalArgumentException: Cannot write incompatible dataset to table with
+# schema ... circuit_Id should be required, but is optional.
+CIRCUIT_TRACK_TYPE_SCHEMA = StructType(
+    [
+        StructField("circuit_Id", StringType(), True),
+        StructField("track_type", StringType(), True),
+    ]
+)

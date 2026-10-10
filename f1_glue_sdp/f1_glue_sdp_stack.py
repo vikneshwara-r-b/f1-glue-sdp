@@ -9,6 +9,7 @@ from aws_cdk import (
     aws_iam as iam,
     aws_s3 as s3,
     aws_s3_assets as s3_assets,
+    aws_s3_deployment as s3_deploy,
 )
 from constructs import Construct
 
@@ -85,6 +86,34 @@ class F1GlueSdpStack(Stack):
         )
 
         # ======================================================================
+        # Reference data: existence marker only, never the real CSVs
+        # circuit_track_type's streaming table does spark.readStream(...)
+        # .load(reference_dir) -- confirmed on a real Glue run that this raises
+        # AnalysisException [PATH_NOT_FOUND] if that S3 prefix doesn't exist yet,
+        # the same failure mode raw_race's bronze-staging path had (see
+        # f1_pipeline_lib/extract.py::ensure_staging_path_exists). Deploy always
+        # writes this tiny `.keep` marker so the prefix exists even before anyone
+        # runs `scripts/deploy.sh --upload-reference-data`. It deliberately does
+        # NOT upload the real reference_data/ folder -- that stays a separate,
+        # explicit opt-in step (see deploy.sh), so a plain `cdk deploy` can never
+        # ship stray local files from that folder to S3.
+        #
+        # prune=False is essential here: without it, BucketDeployment's default
+        # behavior deletes anything already in this destination prefix that
+        # isn't part of *this* deployment's own source -- which would wipe out
+        # real CSVs a prior --upload-reference-data run had already placed here,
+        # on every single `cdk deploy`.
+        # ======================================================================
+        reference_data_keep_marker = s3_deploy.BucketDeployment(
+            self,
+            "ReferenceDataKeepMarker",
+            sources=[s3_deploy.Source.data("circuit_track_type/.keep", "")],
+            destination_bucket=bucket,
+            destination_key_prefix=f"{props.prefix}/reference-data",
+            prune=False,
+        )
+
+        # ======================================================================
         # Data Catalog
         # SDP registers bronze/curated/gold tables into this database at run
         # time but does not create the database itself, so it must exist (with
@@ -152,6 +181,7 @@ class F1GlueSdpStack(Stack):
             },
         )
         job.add_resource_dependency(database)
+        job.node.add_dependency(reference_data_keep_marker)
 
         # ======================================================================
         # Tags & outputs

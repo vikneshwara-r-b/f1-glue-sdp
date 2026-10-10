@@ -28,6 +28,16 @@ def test_render_package_generates_manifest_from_props(tmp_path):
     assert 'spark.sql.catalog.glue_catalog.warehouse: "s3://my-bucket/my-prefix/warehouse"' in manifest_text
     assert 'spark.f1.api.base_url: "https://f1api.dev/api"' in manifest_text
     assert 'spark.f1.staging.path: "s3://my-bucket/my-prefix/bronze-staging/"' in manifest_text
+    assert (
+        'spark.f1.reference.circuit_track_type.path: '
+        '"s3://my-bucket/my-prefix/reference-data/circuit_track_type/"'
+    ) in manifest_text
+    # _sys_path_bootstrap.py's own glob entry must precede transformations/**'s
+    # so SDP execs it first (see spark-pipeline.yml's comment + that file's
+    # docstring) -- this ordering is what the whole mechanism depends on.
+    bootstrap_idx = manifest_text.index("include: _sys_path_bootstrap.py")
+    transformations_idx = manifest_text.index("include: transformations/**")
+    assert bootstrap_idx < transformations_idx
 
 
 def test_render_package_root_layout(tmp_path):
@@ -35,7 +45,9 @@ def test_render_package_root_layout(tmp_path):
     _render(out_dir)
 
     assert (out_dir / "spark-pipeline.yml").is_file()
+    assert (out_dir / "_sys_path_bootstrap.py").is_file()
     assert (out_dir / "transformations").is_dir()
+    assert (out_dir / "transformations" / "00_bronze_circuit_track_type.py").is_file()
     assert (out_dir / "transformations" / "01_bronze_raw.py").is_file()
     assert (out_dir / "transformations" / "02_bronze_prepared.py").is_file()
     assert (out_dir / "transformations" / "03_curated.sql").is_file()
@@ -68,6 +80,6 @@ def test_render_package_is_idempotent(tmp_path):
 
     manifest_text = (out_dir / "spark-pipeline.yml").read_text()
     # Re-rendering must not duplicate or stack substitutions. "my-bucket" appears
-    # 3 times in a correctly-rendered manifest: storage, Iceberg warehouse, and
-    # the bronze staging path.
-    assert manifest_text.count("my-bucket") == 3
+    # 4 times in a correctly-rendered manifest: storage, Iceberg warehouse, the
+    # bronze staging path, and the circuit_track_type reference data path.
+    assert manifest_text.count("my-bucket") == 4
