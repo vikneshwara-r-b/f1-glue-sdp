@@ -40,6 +40,7 @@ def render_package(
 
     shutil.copytree(src_dir / "transformations", out_dir / "transformations")
     shutil.copytree(src_dir / "f1_pipeline_lib", out_dir / "f1_pipeline_lib")
+    shutil.copy2(src_dir / "_sys_path_bootstrap.py", out_dir / "_sys_path_bootstrap.py")
 
     manifest_template = (src_dir / "spark-pipeline.yml").read_text()
     manifest = manifest_template.format(

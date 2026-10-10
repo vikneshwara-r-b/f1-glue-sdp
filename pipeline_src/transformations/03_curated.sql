@@ -21,13 +21,31 @@ FROM (
   FROM race_teams
 ) WHERE _rn = 1;
 
+-- dim_circuits is enriched with track_type from circuit_track_type, a second,
+-- independent, non-API reference source (a streaming table ingesting static
+-- flat files from S3 -- see 00_bronze_circuit_track_type.py). This single
+-- JOIN reference is what makes SDP add circuit_track_type as an upstream
+-- dependency of dim_circuits, with no other orchestration config anywhere.
+-- LEFT JOIN (not INNER): a missing/mismatched circuit_Id should surface as
+-- track_type = NULL, not silently drop the circuit row (and cascade into
+-- dropping it from circuit_summary too). The inner ROW_NUMBER() dedup on
+-- circuit_track_type is needed because it's an append-only streaming table --
+-- a future corrected/additional row for the same circuit must not fan out
+-- this join; latest load_date_time wins, the same SCD1 convention already
+-- used for dim_drivers/dim_teams/dim_circuits itself.
 CREATE MATERIALIZED VIEW dim_circuits AS
-SELECT circuit_Id, name, city, country, length, corners, first_Participation_Year, lap_Record,
-       fastest_Lap_Driver_Id, fastest_Lap_Team_Id, fastest_Lap_Year, race_Date, load_date_time
+SELECT rc.circuit_Id, rc.name, rc.city, rc.country, ctt.track_type, rc.length, rc.corners,
+       rc.first_Participation_Year, rc.lap_Record, rc.fastest_Lap_Driver_Id,
+       rc.fastest_Lap_Team_Id, rc.fastest_Lap_Year, rc.race_Date, rc.load_date_time
 FROM (
   SELECT *, ROW_NUMBER() OVER (PARTITION BY circuit_Id ORDER BY race_Date DESC, load_date_time DESC) AS _rn
   FROM race_circuits
-) WHERE _rn = 1;
+) rc
+LEFT JOIN (
+  SELECT *, ROW_NUMBER() OVER (PARTITION BY circuit_Id ORDER BY load_date_time DESC) AS _rn
+  FROM circuit_track_type
+) ctt ON rc.circuit_Id = ctt.circuit_Id AND ctt._rn = 1
+WHERE rc._rn = 1;
 
 CREATE MATERIALIZED VIEW fact_race_results AS
 SELECT season_year, race_Id, driver_Id, team_Id, circuit_Id, race_Name, race_Round, race_Date, race_Time,

@@ -35,6 +35,20 @@ configuration:
   # 3.9/3.10+ mismatch in the Python Data Source worker) -- this staging
   # approach is the one that's actually known-working.
   spark.f1.staging.path: "s3://{bucket}/{prefix}/bronze-staging/"
+  # Second, independent, non-API reference source: static circuit track-type
+  # (street/permanent/hybrid) CSVs, deployed declaratively to this prefix by
+  # the CDK stack's BucketDeployment construct (not fetched/staged at run
+  # time). A directory, not a single file key -- the streaming file source in
+  # 00_bronze_circuit_track_type.py watches it for new files.
+  spark.f1.reference.circuit_track_type.path: "s3://{bucket}/{prefix}/reference-data/circuit_track_type/"
 libraries:
+  # Must come first: makes f1_pipeline_lib importable for every transformation
+  # file below, in one place -- see _sys_path_bootstrap.py. SDP execs each
+  # libraries: glob entry's matching files in the order the entries appear
+  # here (confirmed from pyspark/pipelines/cli.py::register_definitions),
+  # so this entry running before transformations/** is guaranteed, not
+  # incidental.
+  - glob:
+      include: _sys_path_bootstrap.py
   - glob:
       include: transformations/**
